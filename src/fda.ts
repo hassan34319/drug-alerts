@@ -82,12 +82,31 @@ export type RecallRecord = {
   openfda?: { generic_name?: string[] }; // FDA-linked product info; generic_name is a list
 };
 
-/** Recalls mentioning a medicine name, newest first. status is Ongoing (active), Completed or Terminated. */
+/**
+ * Recalls mentioning a medicine, newest first. status is Ongoing (active), Completed or Terminated.
+ * Searches the FDA-linked generic name OR the product description (a space means OR), because many
+ * recalls are never linked to the product directory and only name the drug in their description.
+ * Results include combinations and unrelated mentions: the caller filters with recallMatches().
+ */
 export function getRecalls(genericName: string, limit = 5) {
+  const n = clean(genericName);
   return query<RecallRecord>("enforcement", {
-    search: `openfda.generic_name:"${clean(genericName)}"`,
+    search: `openfda.generic_name:"${n}" product_description:"${n}"`,
     sort: "report_date:desc",
     limit: String(limit), // openFDA allows up to 1000 per request
+  });
+}
+
+/**
+ * Every recall the FDA reported between two dates (YYYYMMDD, inclusive), newest first.
+ * Not filtered by medicine: the caller filters in memory (see alerts.ts), because most fresh
+ * recalls have no openfda.generic_name yet, so a name search here would miss them.
+ */
+export function getRecentRecalls(fromDate: string, toDate: string) {
+  return query<RecallRecord>("enforcement", {
+    search: `report_date:[${fromDate} TO ${toDate}]`,
+    sort: "report_date:desc",
+    limit: "1000", // a week is ~30-100 recalls; 1000 (openFDA's max) covers our 90-day cap
   });
 }
 

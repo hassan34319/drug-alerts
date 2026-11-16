@@ -1,5 +1,6 @@
 import { getRecalls, getShortages, lastUpdated, type RecallRecord, type ShortageRecord } from "./fda";
 import { sameMedicine } from "./normalize";
+import { recallMatches } from "./alerts";
 import type { Medicine } from "./identify";
 
 export const DISCLAIMER =
@@ -63,16 +64,14 @@ export async function checkDrug(medicine: Medicine): Promise<DrugReport> {
   // All four requests are independent, so they run at the same time.
   const [shortageRes, recallRes, shortageDate, recallDate] = await Promise.all([
     getShortages(searchTerm),
-    getRecalls(searchTerm, 1000), // every recall mentioning the name (a few dozen at most), newest first
+    getRecalls(searchTerm, 1000), // every recall mentioning the name (up to a few hundred), newest first
     lastUpdated("shortages"),
     lastUpdated("enforcement"),
   ]);
 
   // The name search also matches combinations ("acetaminophen" finds Tylenol PM recalls),
   // so keep only recalls whose product is exactly this medicine, then count them ourselves.
-  const recalls = recallRes.results.filter((r) =>
-    (r.openfda?.generic_name ?? []).some((g) => sameMedicine(g, medicine.ingredients)),
-  );
+  const recalls = recallRes.results.filter((r) => recallMatches(r, medicine.ingredients));
   const active = recalls.filter((r) => r.status === "Ongoing");
 
   // Keep only records for exactly this medicine (plain acetaminophen shouldn't pull in Tylenol PM).
