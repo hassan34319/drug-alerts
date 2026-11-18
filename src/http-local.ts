@@ -6,7 +6,8 @@ import { app } from "./lambda";
 
 const port = Number(process.env.PORT ?? 3000);
 
-// @hono/node-server turns Node's built-in HTTP server into something that speaks Hono's Request/Response.
+// @hono/node-server turns Node's built-in H
+// TTP server into something that speaks Hono's Request/Response.
 serve({ fetch: app.fetch, port }, (info) => {
   console.log(`fda-drug-alert HTTP server on http://localhost:${info.port}`);
   console.log(`  MCP endpoint: http://localhost:${info.port}/mcp`);

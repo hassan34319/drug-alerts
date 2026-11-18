@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { DISCLAIMER } from "./checkDrug";
 import z from "zod";
 import { Medicine } from "./identify";

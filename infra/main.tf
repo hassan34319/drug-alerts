@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws" # the official AWS plugin
       version = "~> 6.0"        # any 6.x version, never 7 (major versions can break things)
     }
+     archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
+    }
   }
 }
 
