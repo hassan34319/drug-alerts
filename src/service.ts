@@ -38,3 +38,24 @@ export function recentAlertsCached(days = 7, medicines?: string[]): Promise<Rece
 export function recentWindowCached(days: number): Promise<RecallWindow> {
   return cached(`window#${days}`, 3 * HOUR, () => fetchRecallWindow(days));
 }
+
+/**
+ * Name (or an exact ingredient list from a "choose" option) -> full report. The check_drug tool and
+ * the website's /api/check both use this, so they always give the same answer.
+ */
+export type CheckResult =
+  | { status: "found"; query: string; report: DrugReport }
+  | Exclude<IdentifyResult, { status: "found" }>;
+
+export async function checkByName(name: string, ingredients?: string[]): Promise<CheckResult> {
+  let medicine: Medicine;
+  if (ingredients?.length) {
+    const list = ingredients.map((i) => i.toLowerCase().trim()).sort(); // same shape identify produces
+    medicine = { key: list.join(" + "), ingredients: list, productCount: 0 };
+  } else {
+    const id = await identifyCached(name);
+    if (id.status !== "found") return id;
+    medicine = id.medicine;
+  }
+  return { status: "found", query: name, report: await checkDrugCached(medicine) };
+}

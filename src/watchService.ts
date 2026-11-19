@@ -15,7 +15,8 @@ export type WatchRequestResult =
   | { status: "already_confirmed"; email: string; medicines: string[]; added: string[] }
   | { status: "confirmation_recently_sent"; email: string }
   | { status: "unresolved"; unresolved: RecentAlerts["unresolved"]; resolved: string[] }
-  | { status: "invalid_email"; email: string };
+  | { status: "invalid_email"; email: string }
+  | { status: "email_failed"; email: string };
 
 /**
  * Someone asks to watch medicines. Names are resolved first: anything unclear comes back for the user
@@ -49,7 +50,13 @@ export async function requestWatch(rawEmail: string, names: string[], baseUrl: s
     return { status: "confirmation_recently_sent", email };
   }
 
-  await mail(confirmationEmail(email, medicines, `${baseUrl}/watch/confirm?token=${makeToken(email, "confirm")}`));
+  try {
+    await mail(confirmationEmail(email, medicines, `${baseUrl}/watch/confirm?token=${makeToken(email, "confirm")}`));
+  } catch (err) {
+    // SES refused the address (in the SES sandbox: any address not verified in SES). Nothing is saved.
+    console.error("confirmation email failed:", err);
+    return { status: "email_failed", email };
+  }
   await store.put({
     email,
     medicines,

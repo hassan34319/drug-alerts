@@ -2,9 +2,10 @@
 import { runDailyCheck } from "./watchService";
 
 export const handler = async () => {
-  const apiBaseUrl = process.env.API_BASE_URL; // the public API's address, for the unsubscribe links in emails
-  if (!apiBaseUrl) throw new Error("API_BASE_URL is not set");
-  const summary = await runDailyCheck(apiBaseUrl.replace(/\/$/, ""));
+  // Where the unsubscribe links in emails point: the website if SITE_URL is set, else the api Lambda.
+  const base = process.env.SITE_URL || process.env.API_BASE_URL;
+  if (!base) throw new Error("Neither SITE_URL nor API_BASE_URL is set");
+  const summary = await runDailyCheck(base.replace(/\/$/, ""));
   console.log(JSON.stringify({ msg: "daily check done", ...summary })); // shows up in CloudWatch Logs
   return summary;
 };

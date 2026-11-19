@@ -1,8 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { type Medicine } from "./identify";
 import { DISCLAIMER } from "./checkDrug";
-import { identifyCached, checkDrugCached, recentAlertsCached } from "./service";
+import { checkByName, recentAlertsCached } from "./service";
 import { requestWatch } from "./watchService";
 
 /**
@@ -53,50 +52,15 @@ export function createServer(opts: { baseUrl?: string } = {}): McpServer {
     // 3. The handler: runs when Claude calls the tool. Arguments arrive already validated by zod.
     async ({ name, ingredients }) => {
       try {
-        let medicine: Medicine; // the exact medicine we will report on
-
-        if (ingredients && ingredients.length > 0) {
-          // Claude already picked an option, so skip identify and use the ingredients directly.
-          const list = ingredients.map((i) => i.toLowerCase().trim()).sort(); // same shape identify produces
-          medicine = {
-            key: list.join(" + "),
-            ingredients: list,
-            productCount: 0,
-          };
-        } else {
-          const id = await identifyCached(name); // brand or generic -> found / choose / not_found
-
-          // Ambiguous or unknown: hand the options back to Claude instead of guessing.
-          if (id.status !== "found") {
-            return { content: [{ type: "text", text: JSON.stringify(id) }] };
-          }
-          medicine = id.medicine;
-        }
-
-        const report = await checkDrugCached(medicine); // shortages + recalls from openFDA
-
-        // Tools return a list of content blocks. A JSON text block is the simplest thing Claude reads reliably.
-        // Compact JSON (no indentation): Claude reads it fine, and it uses fewer tokens.
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ status: "found", query: name, report }),
-            },
-          ],
-        };
+        // Same function the website uses: identify (or use the chosen ingredients), then the report.
+        // "choose" / "not_found" come back as they are, so Claude can ask the user.
+        const result = await checkByName(name, ingredients);
+        // Compact JSON: Claude reads it fine, and it uses fewer tokens.
+        return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } catch (err) {
         // isError tells Claude the call failed (e.g. openFDA down), so it says so instead of inventing an answer.
         const message = err instanceof Error ? err.message : String(err);
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: `FDA lookup failed: ${message}. ${DISCLAIMER}`,
-            },
-          ],
-        };
+        return { isError: true, content: [{ type: "text", text: `FDA lookup failed: ${message}. ${DISCLAIMER}` }] };
       }
     },
   );
@@ -179,6 +143,8 @@ export function createServer(opts: { baseUrl?: string } = {}): McpServer {
           "again with ALL the medicines, using that option exactly as written; 'not_found' comes with spelling",
           "suggestions to confirm with the user first.",
           "'invalid_email': ask the user to check the address.",
+          "'email_failed': the email couldn't be delivered to that address and nothing was saved; ask the user to",
+          "check it or use another address.",
           "Alerts cover new recalls only (not ones already published), US only, and are not medical advice.",
           "Every alert email has an unsubscribe link.",
         ].join(" "),
