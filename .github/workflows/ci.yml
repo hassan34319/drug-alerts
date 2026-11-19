@@ -46,6 +46,7 @@ jobs:
         working-directory: web
         run: |
           npm ci
+          npx next typegen
           npx tsc --noEmit
           npx next build
 
@@ -57,7 +58,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read
-      pull-requests: write  # lets the job comment the plan on the PR
+      pull-requests: write # lets the job comment the plan on the PR
     env:
       TF_VAR_alert_email: ${{ secrets.TF_VAR_ALERT_EMAIL }}
       TF_VAR_watch_secret: ${{ secrets.TF_VAR_WATCH_SECRET }}
