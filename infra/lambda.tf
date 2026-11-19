@@ -79,6 +79,7 @@ resource "aws_lambda_function" "api" {
       WATCHLIST_TABLE = aws_dynamodb_table.watchlist.name # NEW
       FROM_EMAIL      = var.alert_email                   # NEW
       WATCH_SECRET    = var.watch_secret                  # NEW
+      SITE_URL        = var.site_url
     }
   }
 

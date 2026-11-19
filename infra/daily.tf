@@ -73,6 +73,7 @@ resource "aws_lambda_function" "daily" {
       WATCHLIST_TABLE = aws_dynamodb_table.watchlist.name
       FROM_EMAIL      = var.alert_email
       WATCH_SECRET    = var.watch_secret
+      SITE_URL        = var.site_url
       API_BASE_URL    = aws_lambda_function_url.api.function_url
       NODE_OPTIONS    = "--enable-source-maps"
     }
