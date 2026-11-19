@@ -25,3 +25,8 @@ variable "watch_secret" {
     error_message = "watch_secret must be at least 32 characters."
   }
 }
+variable "site_url" {
+  description = "Public website address; links in emails point here. Empty = use the Lambda's own pages."
+  type        = string
+  default     = ""
+}
