@@ -1,6 +1,7 @@
 // Recent recalls across all US medicines, optionally narrowed to a list of medicines.
 // Used by the recent_alerts MCP tool now, and by the daily watchlist job in Phase 5.
 
+import { createHash } from "node:crypto";
 import { getRecentRecalls, lastUpdated, type RecallRecord } from "./fda";
 import { identify, type IdentifyResult, type Medicine } from "./identify";
 import { ingredients, productNameMatches, sameMedicine } from "./normalize";
@@ -16,8 +17,7 @@ export function daysBefore(yyyymmdd: string, days: number): string {
   return date.toISOString().slice(0, 10).replace(/-/g, ""); // "2026-10-28" -> "20261028"
 }
 
-const toDashed = (d: string) =>
-  `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`; // "20261104" -> "2026-11-04"
+const toDashed = (d: string) => `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`; // "20261104" -> "2026-11-04"
 
 // ---------- matching ----------
 
@@ -28,13 +28,9 @@ const toDashed = (d: string) =>
  *    comma of product_description, e.g. "Atorvastatin Calcium Tablets, USP, 10 mg, 90-count bottle...",
  *    or the generic name in brackets after a brand name.
  */
-export function recallMatches(
-  r: Pick<RecallRecord, "openfda" | "product_description">,
-  target: string[],
-): boolean {
+export function recallMatches(r: Pick<RecallRecord, "openfda" | "product_description">, target: string[]): boolean {
   const linked = r.openfda?.generic_name;
-  if (linked && linked.length > 0)
-    return linked.some((g) => sameMedicine(g, target));
+  if (linked && linked.length > 0) return linked.some((g) => sameMedicine(g, target));
 
   const description = r.product_description ?? "";
   const productName = description.split(/[,;]/)[0]; // ";" separates multiple products in one recall
@@ -44,14 +40,10 @@ export function recallMatches(
   const open = productName.indexOf("(");
   if (open >= 0) {
     const close = description.indexOf(")", open);
-    const inner = description
-      .slice(open + 1, close > open ? close : undefined)
-      .split(";")[0]
-      .toLowerCase();
+    const inner = description.slice(open + 1, close > open ? close : undefined).split(";")[0].toLowerCase();
     // If the brackets mention our medicine, they ARE the ingredient list: decide on them alone,
     // so "Wound Gel (Benzalkonium Chloride and Lidocaine)" counts as a combination.
-    if (target.every((t) => inner.includes(t)))
-      return productNameMatches(inner.replace(/,/g, " and "), target);
+    if (target.every((t) => inner.includes(t))) return productNameMatches(inner.replace(/,/g, " and "), target);
     // Otherwise the brackets are a note like "(Generic for Xylocaine)" or "(NSAID)": ignore them.
     return productNameMatches(productName.slice(0, open), target);
   }
@@ -76,24 +68,24 @@ export type RecentAlerts = {
   to: string; // window end = the FDA's last update, YYYY-MM-DD
   total: number;
   alerts: Alert[];
-  unresolved: {
-    query: string;
-    status: "choose" | "not_found";
-    options?: string[];
-    suggestions?: string[];
-  }[];
+  unresolved: { query: string; status: "choose" | "not_found"; options?: string[]; suggestions?: string[] }[];
   note: string;
 };
 
-const CLASS_RANK: Record<string, number> = {
-  "Class I": 0,
-  "Class II": 1,
-  "Class III": 2,
-};
+const CLASS_RANK: Record<string, number> = { "Class I": 0, "Class II": 1, "Class III": 2 };
 const rank = (c?: string) => CLASS_RANK[c ?? ""] ?? 3; // "Not Yet Classified" and unknowns go last
 
+/**
+ * Recalls the FDA hasn't classified yet can arrive with no recall number. The watchlist needs a stable id
+ * to remember what it already emailed, so those get one built from the date, firm and product text.
+ * (When the FDA later assigns a real number, it counts as new and is emailed once more, now classified.)
+ */
+const recallId = (r: WindowRecall) =>
+  r.recall_number ||
+  `unnumbered-${r.report_date}-${createHash("sha1").update(`${r.recalling_firm}|${r.product_description}`).digest("hex").slice(0, 10)}`;
+
 const toAlert = (r: WindowRecall, medicine?: string): Alert => ({
-  id: r.recall_number,
+  id: recallId(r),
   class: r.classification,
   status: r.status,
   reported: r.report_date ? toDashed(r.report_date) : undefined,
@@ -108,20 +100,10 @@ const toAlert = (r: WindowRecall, medicine?: string): Alert => ({
 /** A recall trimmed to what matching and the report need, so a 90-day window stays well under 400 KB. */
 export type WindowRecall = Pick<
   RecallRecord,
-  | "recall_number"
-  | "classification"
-  | "status"
-  | "report_date"
-  | "recalling_firm"
-  | "product_description"
-  | "reason_for_recall"
+  "recall_number" | "classification" | "status" | "report_date" | "recalling_firm" | "product_description" | "reason_for_recall"
 > & { openfda?: { generic_name?: string[] } };
 
-export type RecallWindow = {
-  from: string;
-  to: string;
-  recalls: WindowRecall[];
-}; // dates as YYYYMMDD
+export type RecallWindow = { from: string; to: string; recalls: WindowRecall[] }; // dates as YYYYMMDD
 
 /**
  * Every recall the FDA reported in the last `days` days, counted back from the FDA's latest weekly update
@@ -129,8 +111,7 @@ export type RecallWindow = {
  */
 export async function fetchRecallWindow(days = 7): Promise<RecallWindow> {
   const updated = await lastUpdated("enforcement"); // e.g. "2026-11-04"
-  if (!updated)
-    throw new Error("Could not read the FDA recall dataset's last update date");
+  if (!updated) throw new Error("Could not read the FDA recall dataset's last update date");
   const to = updated.replace(/-/g, "");
   const from = daysBefore(to, days - 1); // inclusive window: days=7 covers the update day plus the 6 before
 
@@ -143,9 +124,7 @@ export async function fetchRecallWindow(days = 7): Promise<RecallWindow> {
     recalling_firm: r.recalling_firm,
     product_description: r.product_description?.slice(0, 500), // the product name and bracket text are near the start
     reason_for_recall: r.reason_for_recall?.slice(0, 300),
-    ...(r.openfda?.generic_name
-      ? { openfda: { generic_name: r.openfda.generic_name } }
-      : {}),
+    ...(r.openfda?.generic_name ? { openfda: { generic_name: r.openfda.generic_name } } : {}),
   }));
   return { from, to, recalls };
 }
@@ -165,29 +144,15 @@ export async function resolveMedicines(
     names.map((m): Promise<IdentifyResult> => {
       if (!m.includes("+")) return identifyFn(m);
       const list = ingredients(m);
-      return Promise.resolve({
-        status: "found",
-        query: m,
-        medicine: { key: list.join(" + "), ingredients: list, productCount: 0 },
-      });
+      return Promise.resolve({ status: "found", query: m, medicine: { key: list.join(" + "), ingredients: list, productCount: 0 } });
     }),
   );
   const resolved: Medicine[] = [];
   const unresolved: RecentAlerts["unresolved"] = [];
   for (const id of results) {
     if (id.status === "found") resolved.push(id.medicine);
-    else if (id.status === "choose")
-      unresolved.push({
-        query: id.query,
-        status: "choose",
-        options: id.options.map((o) => o.key),
-      });
-    else
-      unresolved.push({
-        query: id.query,
-        status: "not_found",
-        suggestions: id.suggestions,
-      });
+    else if (id.status === "choose") unresolved.push({ query: id.query, status: "choose", options: id.options.map((o) => o.key) });
+    else unresolved.push({ query: id.query, status: "not_found", suggestions: id.suggestions });
   }
   return { resolved, unresolved };
 }
@@ -212,11 +177,7 @@ export function buildAlerts(
   }
 
   // Most serious first; newest first within the same class.
-  alerts.sort(
-    (a, b) =>
-      rank(a.class) - rank(b.class) ||
-      (b.reported ?? "").localeCompare(a.reported ?? ""),
-  );
+  alerts.sort((a, b) => rank(a.class) - rank(b.class) || (b.reported ?? "").localeCompare(a.reported ?? ""));
 
   return {
     from: toDashed(window.from),
@@ -241,11 +202,7 @@ type Deps = {
  * Recent recalls, optionally narrowed to `medicines`; unclear names come back in `unresolved`.
  * `deps` lets the service plug in cached versions of the two network steps.
  */
-export async function recentAlerts(
-  days = 7,
-  medicines?: string[],
-  deps: Deps = {},
-): Promise<RecentAlerts> {
+export async function recentAlerts(days = 7, medicines?: string[], deps: Deps = {}): Promise<RecentAlerts> {
   const getWindow = deps.getWindow ?? fetchRecallWindow;
 
   if (!medicines?.length) return buildAlerts(await getWindow(days));

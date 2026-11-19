@@ -4,7 +4,7 @@
 import { cached, DAY, HOUR } from "./cache";
 import { identify, type IdentifyResult, type Medicine } from "./identify";
 import { checkDrug, type DrugReport } from "./checkDrug";
-import { fetchRecallWindow, recentAlerts, type RecentAlerts } from "./alerts";
+import { fetchRecallWindow, recentAlerts, type RecallWindow, type RecentAlerts } from "./alerts";
 
 /** Same input -> same key: "Dilaudid ", "dilaudid" and "DILAUDID" share one cache entry. */
 const norm = (s: string) => s.toLowerCase().trim().replace(/\s+/g, " ");
@@ -31,8 +31,10 @@ export function checkDrugCached(medicine: Medicine): Promise<DrugReport> {
  * The daily watchlist job (Phase 5) gets the same benefit: one FDA fetch for all users.
  */
 export function recentAlertsCached(days = 7, medicines?: string[]): Promise<RecentAlerts> {
-  return recentAlerts(days, medicines, {
-    getWindow: (d) => cached(`window#${d}`, 3 * HOUR, () => fetchRecallWindow(d)),
-    identifyFn: identifyCached,
-  });
+  return recentAlerts(days, medicines, { getWindow: recentWindowCached, identifyFn: identifyCached });
+}
+
+/** The raw recall window for `days`, cached 3 hours. Shared by recent_alerts and the watchlist. */
+export function recentWindowCached(days: number): Promise<RecallWindow> {
+  return cached(`window#${days}`, 3 * HOUR, () => fetchRecallWindow(days));
 }

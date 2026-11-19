@@ -8,7 +8,7 @@
     "mcp": "tsx src/mcp.ts",
     "inspect": "npx @modelcontextprotocol/inspector tsx src/mcp.ts",
     "http": "tsx src/http-local.ts",
-    "build": "esbuild src/lambda.ts --bundle --minify --sourcemap --platform=node --target=node22 --format=esm --outfile=dist/index.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\""
+    "build": "esbuild src/lambda.ts src/daily.ts --bundle --minify --sourcemap --platform=node --target=node22 --format=esm --outdir=dist --out-extension:.js=.mjs --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\""
   },
   "keywords": [],
   "author": "",
@@ -22,6 +22,7 @@
   "type": "module",
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1169.0",
+    "@aws-sdk/client-sesv2": "^3.1172.0",
     "@aws-sdk/lib-dynamodb": "^3.1169.0",
     "@hono/aws-lambda": "^1.0.1",
     "@hono/node-server": "^2.1.8",

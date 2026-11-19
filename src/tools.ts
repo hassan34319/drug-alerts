@@ -1,11 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { type Medicine } from "./identify";
 import { DISCLAIMER } from "./checkDrug";
-import z from "zod";
-import { Medicine } from "./identify";
-import { checkDrugCached, identifyCached, recentAlertsCached } from "./service";
+import { identifyCached, checkDrugCached, recentAlertsCached } from "./service";
+import { requestWatch } from "./watchService";
 
-export function createServer(): McpServer {
+/**
+ * baseUrl: the public address of this server (e.g. https://xxxx.lambda-url.ap-southeast-2.on.aws).
+ * The watchlist tool needs it to build the confirm link in the email, so it's only offered when we know it.
+ */
+export function createServer(opts: { baseUrl?: string } = {}): McpServer {
   const server = new McpServer({ name: "fda-drug-alert", version: "0.1.0" });
+
   // 2. Register the check_drug tool.
   server.registerTool(
     "check_drug", // the name Claude uses to call the tool: short, snake_case, describes the action
@@ -128,9 +134,7 @@ export function createServer(): McpServer {
           .min(1)
           .max(90)
           .optional()
-          .describe(
-            "How many days of recalls to return, counted back from the FDA's latest update. Defaults to 7.",
-          ),
+          .describe("How many days of recalls to return, counted back from the FDA's latest update. Defaults to 7."),
         medicines: z
           .array(z.string())
           .optional()
@@ -149,17 +153,58 @@ export function createServer(): McpServer {
       } catch (err) {
         // isError tells Claude the call failed, so it says so instead of inventing an answer.
         const message = err instanceof Error ? err.message : String(err);
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: `FDA lookup failed: ${message}. ${DISCLAIMER}`,
-            },
-          ],
-        };
+        return { isError: true, content: [{ type: "text", text: `FDA lookup failed: ${message}. ${DISCLAIMER}` }] };
       }
     },
   );
+
+  // 4. Register the add_to_watchlist tool (only when we know our public address, for the confirm link).
+  if (opts.baseUrl) {
+    const baseUrl = opts.baseUrl;
+    server.registerTool(
+      "add_to_watchlist",
+      {
+        title: "Email me about new recalls for my medicines",
+        description: [
+          "Sign the user up for email alerts about NEW FDA recalls of specific medicines.",
+          "Only use it when the user asks to be notified or to watch their medicines, and only with an email address",
+          "the user typed in this conversation: never guess or reuse an address from elsewhere.",
+          "Results by `status`:",
+          "'confirmation_sent': tell the user to open the email and click Confirm; no alerts are sent until they do",
+          "(the link works for 7 days; check spam if it doesn't arrive).",
+          "'confirmation_recently_sent': a confirmation went out in the last hour; the medicines were added to it,",
+          "ask the user to use that email.",
+          "'already_confirmed': already subscribed; `added` lists the medicines newly added (empty if none were new).",
+          "'unresolved': nothing was saved; for each entry, status 'choose' means ask which option they mean, then call",
+          "again with ALL the medicines, using that option exactly as written; 'not_found' comes with spelling",
+          "suggestions to confirm with the user first.",
+          "'invalid_email': ask the user to check the address.",
+          "Alerts cover new recalls only (not ones already published), US only, and are not medical advice.",
+          "Every alert email has an unsubscribe link.",
+        ].join(" "),
+        inputSchema: {
+          email: z.string().describe("The user's email address, exactly as they typed it in this conversation"),
+          medicines: z
+            .array(z.string().min(2))
+            .min(1)
+            .max(20)
+            .describe(
+              "Medicine names as the user wrote them, brand or generic (e.g. ['Lipitor', 'metformin']), " +
+                "or an option copied exactly from a previous `unresolved` result",
+            ),
+        },
+      },
+      async ({ email, medicines }) => {
+        try {
+          const result = await requestWatch(email, medicines, baseUrl);
+          return { content: [{ type: "text", text: JSON.stringify(result) }] };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { isError: true, content: [{ type: "text", text: `Could not set up alerts: ${message}` }] };
+        }
+      },
+    );
+  }
+
   return server;
 }

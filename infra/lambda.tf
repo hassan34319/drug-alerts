@@ -1,3 +1,6 @@
+# NEW: reads your AWS account ID, used in the SES permission below
+data "aws_caller_identity" "me" {}
+
 data "archive_file" "api" {
   type        = "zip"
   source_dir  = "${path.module}/../dist"
@@ -39,6 +42,21 @@ resource "aws_iam_role_policy" "api" {
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = "${aws_cloudwatch_log_group.api.arn}:*"
       },
+      # NEW: read/write one person's watchlist record (no Scan here)
+      {
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem", "dynamodb:PutItem"]
+        Resource = aws_dynamodb_table.watchlist.arn
+      },
+      # NEW: send email, but only FROM the verified address
+      {
+        Effect   = "Allow"
+        Action   = "ses:SendEmail"
+        Resource = "arn:aws:ses:ap-southeast-2:${data.aws_caller_identity.me.account_id}:identity/*"
+        Condition = {
+          StringEquals = { "ses:FromAddress" = var.alert_email }
+        }
+      },
     ]
   })
 }
@@ -48,7 +66,7 @@ resource "aws_lambda_function" "api" {
   role             = aws_iam_role.api.arn
   runtime          = "nodejs22.x"
   architectures    = ["arm64"]
-  handler          = "index.handler"
+  handler          = "lambda.handler" # CHANGED: was index.handler (build now outputs lambda.mjs)
   filename         = data.archive_file.api.output_path
   source_code_hash = data.archive_file.api.output_base64sha256
   memory_size      = 512
@@ -56,8 +74,11 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      CACHE_TABLE  = aws_dynamodb_table.cache.name
-      NODE_OPTIONS = "--enable-source-maps"
+      CACHE_TABLE     = aws_dynamodb_table.cache.name
+      NODE_OPTIONS    = "--enable-source-maps"
+      WATCHLIST_TABLE = aws_dynamodb_table.watchlist.name # NEW
+      FROM_EMAIL      = var.alert_email                   # NEW
+      WATCH_SECRET    = var.watch_secret                  # NEW
     }
   }
 
