@@ -1,0 +1,73 @@
+# Runs when a PR is merged (any push to main touching the backend or infra): build, then apply.
+# The website deploys separately through Vercel's own GitHub integration.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "infra/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {} # "Run workflow" button in the Actions tab, for a manual redeploy
+
+permissions:
+  contents: read
+
+# Never two deploys at once; a newer push waits for the running one instead of cancelling it mid-apply.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and apply
+    runs-on: ubuntu-latest
+    # The deploy key is a secret of this environment, which only the main branch may use.
+    environment: production
+    env:
+      TF_VAR_alert_email: ${{ secrets.TF_VAR_ALERT_EMAIL }}
+      TF_VAR_watch_secret: ${{ secrets.TF_VAR_WATCH_SECRET }}
+      TF_VAR_site_url: ${{ vars.SITE_URL }}
+      TF_VAR_aws_profile: "" # CI logs in with its access key, not a local profile
+      TF_IN_AUTOMATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install, typecheck, build
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_DEPLOY_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_DEPLOY_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-2
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.17"
+          terraform_wrapper: false
+
+      - name: terraform init
+        working-directory: infra
+        run: terraform init -input=false
+
+      - name: terraform apply
+        working-directory: infra
+        run: terraform apply -input=false -auto-approve -no-color -lock-timeout=5m
+
+      - name: Smoke test the live API
+        run: |
+          url=$(terraform -chdir=infra output -raw api_url)
+          curl -fsS "${url}health"
+          curl -fsS "${url}api/suggest?q=lip" | head -c 300

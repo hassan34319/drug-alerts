@@ -59,6 +59,8 @@ Everything is serverless and pay-per-request: no servers, nothing running betwee
 | Front end | **Next.js 16** (App Router, Cache Components, Server Functions) on **Vercel** | Server components call the API; the browser never sees the Lambda URL. |
 | Infrastructure | **Terraform** (AWS provider 6) | Every table, role, policy, function, URL and schedule is code. |
 | Build | **esbuild** | Two Lambda entry points bundled and minified into one zip, with source maps. |
+| CI/CD | **GitHub Actions** | Plan on every PR as a comment, apply on merge, least-privilege CI users, deploy key locked to `main`. State in S3 with locking. |
+| Monitoring | **CloudWatch alarms** + **SNS** | Email when the daily check fails or doesn't run, or the API errors. |
 
 ## Features
 
@@ -164,6 +166,27 @@ infra/              Terraform: tables, roles, policies, Lambdas, URL, SES, sched
 web/                Next.js site
 ```
 
+## CI/CD
+
+GitHub Actions tests every pull request and deploys the backend on merge.
+
+- **Pull request (`ci.yml`):** typecheck, the in-memory tests, both builds (Lambda bundles and the Next.js site), `terraform fmt`, `validate` and `plan`. The plan is posted as a PR comment, so the review shows exactly what will change in AWS.
+- **Merge to `main` (`deploy.yml`):** build, `terraform apply`, then a smoke test against the live API. Deploys never overlap.
+- **Two least-privilege CI identities:** pull requests use a read-only IAM user (plus the Terraform lock file); deploys use a separate user that can manage AWS services but IAM only for this project's own roles and users.
+- **The deploy key is locked to `main`:** it lives in a GitHub `production` environment that only the main branch can use, so a workflow edited on a branch can't reach it. Keys are created by a script and piped straight into GitHub secrets, never printed or written to disk or Terraform state.
+- **Terraform state** lives in a versioned S3 bucket with native S3 locking (`use_lockfile`), so a laptop and CI can never apply at the same time.
+- **The website** deploys through Vercel's GitHub integration on the same merge.
+
+OIDC (no stored keys at all) is the next step; the account's current AWS plan blocks creating an OIDC identity provider.
+
+## Monitoring
+
+CloudWatch alarms email the owner through SNS when:
+
+- the daily check **fails** (any watcher's email failed, or the FDA call failed; Lambda's automatic retry then resends only to the failed watchers, never a duplicate),
+- the daily check **doesn't run** for over a day,
+- the API returns **5+ errors in 5 minutes**.
+
 ## Run it locally
 
 ```bash
@@ -190,10 +213,12 @@ npx tsx src/try-routes.ts    # MCP tool + email link routes through the real HTT
 
 ## Deploy
 
+Normally: open a pull request, read the plan comment, merge. To deploy by hand from a laptop:
+
 ```bash
 npm run build                # esbuild: dist/lambda.mjs + dist/daily.mjs
 cd infra
-terraform init
+terraform init -backend-config="profile=fda"
 terraform plan
 terraform apply
 ```
@@ -210,10 +235,9 @@ The website deploys to Vercel with root directory `web` and one environment vari
 
 ## Roadmap
 
-- GitHub Actions deploys with AWS OIDC (no stored keys) and remote Terraform state in S3
 - Own domain: SES production access, mail from `alerts@` the domain
-- CloudWatch alarms on Lambda errors and the daily run
 - Rate limiting on the public endpoints
+- GitHub OIDC for CI (no stored AWS keys)
 - Alerts when a watched medicine goes into shortage, not only recalls
 - The same MCP server on Cloudflare Workers
 
