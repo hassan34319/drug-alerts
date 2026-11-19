@@ -1,5 +1,13 @@
 # Which Terraform and which plugin versions this project expects.
 terraform {
+  backend "s3" {
+    bucket       = "drug-alert-tfstate-974187939513"
+    key          = "infra/terraform.tfstate"
+    region       = "ap-southeast-2"
+    encrypt      = true
+    use_lockfile = true
+  }
+
   required_version = ">= 1.6"
   required_providers {
     aws = {
@@ -16,7 +24,7 @@ terraform {
 # How to connect to AWS: same profile and region you set up with `aws configure`.
 provider "aws" {
   region  = "ap-southeast-2"
-  profile = "fda"
+  profile = var.aws_profile != "" ? var.aws_profile : null
 
   # Every resource gets these labels, so in the console you can see what belongs to this project.
   default_tags {
@@ -49,4 +57,9 @@ resource "aws_dynamodb_table" "cache" {
 # Printed after apply, so you can see the result without opening the console.
 output "cache_table_name" {
   value = aws_dynamodb_table.cache.name
+}
+variable "aws_profile" {
+  description = "Local AWS CLI profile. CI sets it to an empty string and logs in with OIDC instead."
+  type        = string
+  default     = "fda"
 }

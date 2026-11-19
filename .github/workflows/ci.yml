@@ -1,0 +1,130 @@
+# Runs on every pull request: tests, builds, and the Terraform plan posted as a PR comment.
+# Reading the plan comment, then merging, is the approval for deploy.yml.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+
+      - name: Backend - install
+        run: npm ci
+
+      - name: Backend - typecheck
+        run: npm run typecheck
+
+      - name: Backend - tests (in-memory, no AWS)
+        run: |
+          npx tsx src/try-watch.ts
+          npx tsx src/try-routes.ts
+
+      - name: Backend - build Lambda bundles
+        run: npm run build
+
+      - name: Website - install, typecheck, build
+        working-directory: web
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx next build
+
+  plan:
+    name: Terraform plan
+    needs: test
+    runs-on: ubuntu-latest
+    # Forked PRs get no secrets; only branches of this repo can plan.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write  # lets the job comment the plan on the PR
+    env:
+      TF_VAR_alert_email: ${{ secrets.TF_VAR_ALERT_EMAIL }}
+      TF_VAR_watch_secret: ${{ secrets.TF_VAR_WATCH_SECRET }}
+      TF_VAR_site_url: ${{ vars.SITE_URL }}
+      TF_VAR_aws_profile: "" # CI logs in with its access key, not a local profile
+      TF_IN_AUTOMATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The plan zips dist/, so build the same bundles deploy would ship.
+      - run: npm ci && npm run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_PLAN_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_PLAN_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-2
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.17"
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        working-directory: infra
+        run: terraform fmt -check -recursive
+
+      - name: terraform init
+        working-directory: infra
+        run: terraform init -input=false
+
+      - name: terraform validate
+        working-directory: infra
+        run: terraform validate
+
+      - name: terraform plan
+        id: plan
+        working-directory: infra
+        run: |
+          set +e
+          terraform plan -input=false -no-color -lock-timeout=2m -out=tfplan > plan.txt 2>&1
+          code=$?
+          cat plan.txt
+          exit $code
+
+      - name: Comment the plan on the PR
+        if: always() && steps.plan.outcome != 'skipped'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let plan = fs.existsSync('infra/plan.txt') ? fs.readFileSync('infra/plan.txt', 'utf8') : 'No plan output.';
+            const summary = (plan.match(/Plan: .*|No changes\..*/) || ['See the run log'])[0];
+            if (plan.length > 60000) plan = plan.slice(-60000);
+            const body = [
+              `### Terraform plan: ${summary}`,
+              `Outcome: \`${{ steps.plan.outcome }}\`. Merging this PR applies exactly this to AWS.`,
+              '<details><summary>Full plan</summary>',
+              '',
+              '```',
+              plan,
+              '```',
+              '</details>',
+            ].join('\n');
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
